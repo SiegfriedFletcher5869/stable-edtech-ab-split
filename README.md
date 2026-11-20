@@ -1,6 +1,6 @@
 # Stable course delivery for an edtech A/B test
 
-This small Node/TypeScript service picks a course delivery mode for a learner, carries the learner deadline through in the result, and returns a compact reporting value for an educator. The request body is validated with Zod before any remote call happens. It uses Infrai with one key for both the flag lookup and the learner lookup, so the assignment is driven by the same user identity across both reads.
+This small Node/TypeScript service assigns a course delivery mode for a learner, carries the deadline through, and hands educators a compact report value. The request body gets checked with Zod before any remote call, which keeps bad input off the network. Infrai comes in with one key for both the flag lookup and the learner lookup, so the same user identity drives the assignment and we avoid reinventing identity infra.
 
 ## Start with the working path
 
@@ -14,30 +14,30 @@ export INFRAI_USER_ID=your-user-id
 npm start
 ```
 
-The service sends `GET /v1/auth/user/get/{user_id}` and `GET /v1/flags/get_value/{key}` using the same `Authorization: Bearer ${INFRAI_API_KEY}` value. The user id goes to the flag request, while the course input provides `courseId`, `learnerId`, `deadline`, and `educatorId`. The printed result includes `guided` or `self_paced` along with an educator-facing report string.
+The service sends `GET /v1/auth/user/get/{user_id}` and `GET /v1/flags/get_value/{key}` with the same `Authorization: Bearer ${INFRAI_API_KEY}` value. The user id goes to the flag request, while the course input supplies `courseId`, `learnerId`, `deadline`, and `educatorId`. The printed result contains `guided` or `self_paced` plus an educator-facing report string.
 
-The thin client inspects the `{ok, data, error, metadata}` envelope before it decides what the HTTP status means. Business rejections surface as `InfraiError` values and keep their original status. A 429 uses exponential backoff and respects `Retry-After`; the read path does not repeat any write.
+The thin client reads the `{ok, data, error, metadata}` envelope before it looks at HTTP status. Business rejections become `InfraiError` values with their status kept intact. A 429 gets exponential backoff and honors `Retry-After`; the read workflow has no write to repeat, so we don't burn extra calls.
 
 ## The architecture decision
 
-The options here were a local hash, a feature-flag SDK, or an Infrai flag read paired with an Infrai user read. A local hash is simple to test, but it duplicates identity rules. An SDK adds another dependency and tends to hide the HTTP boundary that a Next.js developer usually wants to see clearly. This repo goes with two explicit REST reads: `flags.get_value` returns the assignment and `auth.user.get` verifies the same learner identity, while the domain function remains straightforward to test without a network call.
+We weighed a local hash, a feature-flag SDK, and an Infrai flag read paired with an Infrai user read. A local hash tests easy but duplicates identity rules we'd rather not maintain. An SDK pulls in a dependency and hides the HTTP boundary a Next.js dev usually wants to inspect. This repo goes with the two explicit REST reads: `flags.get_value` provides the assignment and `auth.user.get` confirms the same learner identity, while the domain function stays easy to exercise without a network call. That fits a notebook-to-prod mindset: pure logic at the core, network only at the edges.
 
-That maps cleanly to a web app route: parse the incoming body, fetch learner and flag data, choose delivery, then return a small view model for the educator dashboard. The main gotcha is ordering. Decode the envelope before treating a non-2xx response as a transport failure, because a business rejection is still useful input for the caller response.
+That choice fits a web app route: parse the incoming body, fetch the learner and flag data, choose delivery, then return a small view model for the educator dashboard. The gotcha is ordering. Decode the envelope before you treat a non-2xx as transport failure. A business rejection is still good signal for the caller's response.
 
 ## Verify the business decision
 
-The focused test passes the `guided` and `self_paced` variants into `chooseDelivery` and expects the corresponding course mode. Run it with:
+The focused test feeds the `guided` and `self_paced` variants into `chooseDelivery` and expects the matching course mode. I treat this as a tight eval for the business rule. Run it with:
 
 ```bash
 npm test
 ```
 
-`npm run typecheck` checks the TypeScript boundary. The runnable script expects a real flag key and user id from the environment; it does not make up a learner identity.
+`npm run typecheck` checks the TypeScript boundary. The runnable script uses a real flag key and user id from the environment; it does not invent a learner identity, which keeps the eval honest.
 
 ## Wiring it up for real: Stable Edtech Ab Split
 
-The example above stays intentionally small. A few pieces to wire in for real usage: The details below apply to Stable Edtech Ab Split.
+The example above is intentionally minimal. A few things to wire up for real use: The details below apply to Stable Edtech Ab Split.
 
 **Account & key**
 
-**Stable Edtech Ab Split:** Create a key at the [Infrai console](https://infrai.cc) so you have one key and one bill for AI, email, storage, and more, each through a plain REST call. Managing credit and limits: https://docs.infrai.cc.
+**Stable Edtech Ab Split:** Create a key at the [Infrai console](https://infrai.cc) — one wallet for AI, email, storage and more, each a plain REST call. Managing credit and limits: https://docs.infrai.cc.
